@@ -36,7 +36,11 @@ function nextDate(value: string): string {
 export function generateIcs(event: Appearance): string {
   const description = [
     event.type,
-    event.status === "cancelled" ? "Cancelled" : "Officially announced appearance",
+    event.status === "cancelled"
+      ? "Cancelled"
+      : event.verificationStatus === "verified"
+        ? "Verified appearance"
+        : "Unverified agent-discovered appearance",
     `Source: ${event.sourceUrl}`,
   ]
     .filter(Boolean)

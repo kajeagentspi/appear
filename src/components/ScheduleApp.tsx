@@ -37,6 +37,7 @@ export function ScheduleApp({
   const [events, setEvents] = useState<Appearance[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(Boolean(initialId));
+  const [initializing, setInitializing] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [followed, setFollowed] = useState<string[]>([]);
   const [storageReady, setStorageReady] = useState(false);
@@ -64,34 +65,58 @@ export function ScheduleApp({
 
   useEffect(() => {
     if (!personId) return;
+    const targetPersonId = personId;
     let cancelled = false;
+    let attemptedInitialization = false;
     setLoading(true);
+    setInitializing(false);
     setSearchError(null);
+    setEvents([]);
+    setSelectedId(null);
 
-    adapter
-      .load(personId)
-      .then((loaded) => {
+    async function loadOrInitializeSchedule() {
+      try {
+        let loaded = await adapter.load(targetPersonId);
         if (cancelled) return;
-        const sorted = sortAppearances(loaded);
-        setEvents(sorted);
-        setSelectedId(sorted[0]?.id ?? null);
-        if (sorted.length === 0) {
-          setSearchError(`We don’t track “${searchedName}” yet.`);
-          return;
+
+        if (loaded.length === 0) {
+          attemptedInitialization = true;
+          setInitializing(true);
+          loaded = await adapter.initialize(searchedName);
+          if (cancelled) return;
         }
+
+        const sorted = sortAppearances(loaded);
+        if (sorted.length === 0) {
+          throw new Error("No schedule events were returned");
+        }
+        setEvents(sorted);
+        setSelectedId(sorted[0].id);
         setLastCheckedAt(new Date());
         setRefreshState("idle");
-        setRefreshMessage("Appearance date confirmed");
-      })
-      .catch(() => {
+        setRefreshMessage(
+          attemptedInitialization
+            ? "Agent-discovered schedule loaded"
+            : "Appearance date confirmed"
+        );
+      } catch {
         if (cancelled) return;
         setEvents([]);
         setSelectedId(null);
-        setSearchError(`We don’t track “${searchedName}” yet.`);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
+        setSearchError(
+          attemptedInitialization
+            ? "No verified or agent-discovered schedule could be found."
+            : `We don’t track “${searchedName}” yet.`
+        );
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+          setInitializing(false);
+        }
+      }
+    }
+
+    void loadOrInitializeSchedule();
 
     return () => {
       cancelled = true;
@@ -141,6 +166,11 @@ export function ScheduleApp({
     if (!trimmed) return;
     const normalized = normalizePersonId(trimmed);
     setActiveView("upcoming");
+    setEvents([]);
+    setSelectedId(null);
+    setSearchError(null);
+    setInitializing(false);
+    setLoading(true);
     setSearchedName(trimmed);
     setPersonId(normalized);
   }, [query]);
@@ -230,6 +260,17 @@ export function ScheduleApp({
               following={isFollowing}
               onToggleFollow={handleToggleFollow}
             />
+          )}
+
+          {personId && loading && initializing && (
+            <div
+              className="empty-state"
+              role="status"
+              aria-live="polite"
+              aria-busy="true"
+            >
+              <p>Searching official sources…</p>
+            </div>
           )}
 
           {personId && searchError && !loading && (

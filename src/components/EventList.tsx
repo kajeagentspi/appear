@@ -23,7 +23,7 @@ export function EventList({ events, selectedId, onSelect }: EventListProps) {
       <div className="section-header">
         <div>
           <h2 className="section-title">Upcoming</h2>
-          <p className="section-subtitle">Officially announced appearances only</p>
+          <p className="section-subtitle">Public schedule details with linked sources</p>
         </div>
         <span className="jst-pill" aria-label="Times shown in Japan Standard Time">
           JST

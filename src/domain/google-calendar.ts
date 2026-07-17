@@ -12,7 +12,10 @@ export function buildGoogleCalendarUrl(event: Appearance): string {
     [
       event.type,
       event.status === "cancelled" ? "Cancelled" : null,
-      `Official source: ${event.sourceUrl}`,
+      event.verificationStatus === "unverified"
+        ? "Unverified agent-discovered information; confirm details with the source."
+        : "Verified appearance",
+      `Source: ${event.sourceUrl}`,
     ]
       .filter(Boolean)
       .join("\n")

@@ -66,12 +66,19 @@ export function EventDetail({
     event.type?.toLowerCase() === "festival"
       ? "Festival appearance"
       : event.type ?? "Appearance";
+  const isVerified = event.verificationStatus === "verified";
+  const verificationLabel = isVerified ? "Verified" : "Unverified";
 
   return (
     <article className="detail-card" aria-label={`Details for ${event.title}`}>
       <header className="detail-header">
         <span className="detail-label">Next appearance</span>
-        <span className="official-pill">Official</span>
+        <span
+          className="verification-pill"
+          data-verification={event.verificationStatus}
+        >
+          {verificationLabel}
+        </span>
       </header>
 
       <h2 className="detail-title">{event.title}</h2>
@@ -88,9 +95,13 @@ export function EventDetail({
       </div>
 
       <div className="detail-block">
-        <h3 className="detail-block-title">Verified details</h3>
+        <h3 className="detail-block-title">
+          {isVerified ? "Verified details" : "Agent-discovered details"}
+        </h3>
         <p className="detail-block-text">
-          Date, venue and appearance are supported by the official source.
+          {isVerified
+            ? "Date, venue and appearance are supported by the official source."
+            : "Agent-discovered information. Confirm details with the linked source before making plans."}
         </p>
       </div>
 

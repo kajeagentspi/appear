@@ -11,6 +11,7 @@ const FIELDS: (keyof Appearance)[] = [
   "location",
   "status",
   "sourceUrl",
+  "verificationStatus",
 ];
 
 export function diffAppearances(

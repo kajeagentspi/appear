@@ -21,7 +21,16 @@ export async function refreshPersonSchedule(personId: string): Promise<RefreshRe
   }
 
   const raw = await callKimi(target.sourceText);
-  const validated = sortAppearances(validateAppearances(raw));
+  const verificationBySource = new Map(
+    target.events.map((event) => [event.sourceUrl, event.verificationStatus])
+  );
+  const validated = sortAppearances(
+    validateAppearances(raw).map((event) => ({
+      ...event,
+      verificationStatus:
+        verificationBySource.get(event.sourceUrl) ?? "unverified",
+    }))
+  );
   const result = diffAppearances(target.events, validated);
   saveRefreshSuccess(id, result.events);
   return {

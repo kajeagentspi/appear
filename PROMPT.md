@@ -69,7 +69,7 @@ Use **Kimi through ai& inference** to extract and normalize public appearances f
 Create `.env.example`:
 
 ```env
-AIAND_API_KEY=
+AIAND_KEY=
 AIAND_BASE_URL=https://api.aiand.com/v1
 AIAND_MODEL=moonshotai/kimi-k2.7-code
 ```
@@ -80,7 +80,7 @@ Install `openai` and use the OpenAI-compatible Chat Completions API:
 import OpenAI from "openai";
 
 const client = new OpenAI({
-  apiKey: process.env.AIAND_API_KEY,
+  apiKey: process.env.AIAND_KEY,
   baseURL: process.env.AIAND_BASE_URL,
   maxRetries: 2,
   timeout: 20_000,
@@ -103,7 +103,7 @@ Manual provider smoke test (never run in automated tests):
 
 ```bash
 curl https://api.aiand.com/v1/chat/completions \
-  -H "Authorization: Bearer $AIAND_API_KEY" \
+  -H "Authorization: Bearer $AIAND_KEY" \
   -H "Content-Type: application/json" \
   -d '{"model":"moonshotai/kimi-k2.7-code","messages":[{"role":"user","content":"Reply with OK"}]}'
 ```
@@ -138,4 +138,4 @@ Write deterministic tests (fake timers where needed) proving:
 - All required flows work by keyboard and match both reference images closely.
 - Loading, empty, error, changed, and unchanged states are visible and tested.
 - Source attribution and last-checked status are always visible for a selected event.
-- A real refresh uses Kimi when `AIAND_API_KEY` is present, while the key is absent from client bundles and logs.
+- A real refresh uses Kimi when `AIAND_KEY` is present, while the key is absent from client bundles and logs.

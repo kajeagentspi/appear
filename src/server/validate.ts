@@ -1,7 +1,10 @@
-import type { Appearance } from "@/contracts";
+import type { Appearance, VerificationStatus } from "@/contracts";
 import { createId } from "@/domain";
 
-export function validateAppearances(data: unknown): Appearance[] {
+export function validateAppearances(
+  data: unknown,
+  verificationStatus: VerificationStatus = "unverified"
+): Appearance[] {
   if (typeof data !== "object" || data === null) {
     throw new ValidationError("Expected JSON object");
   }
@@ -11,10 +14,16 @@ export function validateAppearances(data: unknown): Appearance[] {
     throw new ValidationError("Expected events array");
   }
 
-  return payload.events.map((item, index) => validateEvent(item, index));
+  return payload.events.map((item, index) =>
+    validateEvent(item, index, verificationStatus)
+  );
 }
 
-function validateEvent(item: unknown, index: number): Appearance {
+function validateEvent(
+  item: unknown,
+  index: number,
+  verificationStatus: VerificationStatus
+): Appearance {
   if (typeof item !== "object" || item === null || Array.isArray(item)) {
     throw new ValidationError(`Event ${index} is not an object`);
   }
@@ -46,6 +55,7 @@ function validateEvent(item: unknown, index: number): Appearance {
     location: optionalString(event.location, "location", index),
     status: normalizeStatus(event.status, index),
     sourceUrl,
+    verificationStatus,
   };
   normalized.id = createId(normalized);
   return normalized;

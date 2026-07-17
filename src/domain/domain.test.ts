@@ -7,6 +7,7 @@ import {
   diffAppearances,
   formatRelativeTime,
   generateIcs,
+  InitializationRequestError,
   isFollowed,
   loadFollowed,
   normalizePersonId,
@@ -25,6 +26,7 @@ const timedEvent: Appearance = {
   location: "Tokyo, Japan",
   status: "scheduled",
   sourceUrl: "https://example.com/schedule/live",
+  verificationStatus: "verified",
 };
 
 const allDayEvent: Appearance = {
@@ -136,6 +138,97 @@ describe("APPEAR domain", () => {
       new RefreshRequestError(
         "AI_NOT_CONFIGURED",
         "Live refresh isn’t configured."
+      )
+    );
+  });
+
+  it("posts a trimmed name and returns validated unverified initialization events", async () => {
+    const discoveredEvent: Appearance = {
+      ...timedEvent,
+      id: "new-artist-live-2026-07-23",
+      title: "New Artist Live",
+      verificationStatus: "unverified",
+    };
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ events: [discoveredEvent] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(apiAdapter.initialize("  New Artist  ")).resolves.toEqual([
+      discoveredEvent,
+    ]);
+    expect(fetchMock).toHaveBeenCalledWith("/api/initialize", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "New Artist" }),
+    });
+  });
+
+  it.each([
+    ["BAD_REQUEST", "Enter a valid person name."],
+    [
+      "SEARCH_NOT_CONFIGURED",
+      "Autonomous schedule search isn’t configured.",
+    ],
+    ["AI_NOT_CONFIGURED", "Autonomous schedule search isn’t configured."],
+    [
+      "NO_SOURCES_FOUND",
+      "No verified or agent-discovered schedule could be found.",
+    ],
+    [
+      "SOURCE_DISCOVERY_FAILED",
+      "No verified or agent-discovered schedule could be found.",
+    ],
+    [
+      "INFERENCE_FAILED",
+      "No verified or agent-discovered schedule could be found.",
+    ],
+    [
+      "INITIALIZATION_FAILED",
+      "No verified or agent-discovered schedule could be found.",
+    ],
+  ] as const)(
+    "maps initialization failure %s to a stable domain error",
+    async (code, message) => {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(
+          new Response(JSON.stringify({ code, message: "Internal detail" }), {
+            status: code === "BAD_REQUEST" ? 400 : 502,
+            headers: { "Content-Type": "application/json" },
+          })
+        )
+      );
+
+      await expect(apiAdapter.initialize("New Artist")).rejects.toEqual(
+        new InitializationRequestError(code, message)
+      );
+    }
+  );
+
+  it("rejects initialization events that are malformed or marked verified", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            events: [{ ...timedEvent, verificationStatus: "verified" }],
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }
+        )
+      )
+    );
+
+    await expect(apiAdapter.initialize("New Artist")).rejects.toEqual(
+      new InitializationRequestError(
+        "INITIALIZATION_FAILED",
+        "No verified or agent-discovered schedule could be found."
       )
     );
   });

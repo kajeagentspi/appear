@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import type { Appearance } from "@/contracts";
+import type { Appearance, VerificationStatus } from "@/contracts";
 import { normalizePersonId } from "@/domain/people";
 
 
@@ -17,6 +17,10 @@ interface SourceRow {
   source_text: string;
 }
 
+interface TableInfoRow {
+  name: string;
+}
+
 interface AppearanceRow {
   id: string;
   title: string;
@@ -27,6 +31,7 @@ interface AppearanceRow {
   location: string | null;
   status: "scheduled" | "cancelled";
   source_url: string;
+  verification_status: VerificationStatus;
 }
 
 export interface StoredSchedule {
@@ -40,6 +45,17 @@ export interface StoredSchedule {
 export interface RefreshTarget extends StoredSchedule {
   sourceText: string;
   sourceUrls: string[];
+}
+
+export interface InitializeStoredScheduleInput {
+  personId: string;
+  displayName: string;
+  sources: Array<{
+    url: string;
+    sourceText: string;
+    verificationStatus: VerificationStatus;
+  }>;
+  events: Appearance[];
 }
 
 let database: DatabaseSync | null = null;
@@ -68,6 +84,7 @@ function getDatabase(): DatabaseSync {
       person_id TEXT NOT NULL REFERENCES people(id) ON DELETE CASCADE,
       url TEXT NOT NULL,
       source_text TEXT NOT NULL DEFAULT '',
+      verification_status TEXT NOT NULL DEFAULT 'unverified',
       PRIMARY KEY (person_id, url)
     );
 
@@ -282,6 +299,28 @@ Upcoming events:
        strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
   `);
 
+  const sourceColumns = database
+    .prepare("PRAGMA table_info(sources)")
+    .all() as unknown as TableInfoRow[];
+  if (!sourceColumns.some((column) => column.name === "verification_status")) {
+    database.exec(
+      "ALTER TABLE sources ADD COLUMN verification_status TEXT NOT NULL DEFAULT 'unverified'"
+    );
+  }
+
+  database
+    .prepare(
+      `UPDATE sources
+       SET verification_status = 'verified'
+       WHERE (person_id = 'illit' AND url IN (?, ?))
+          OR (person_id = 'le-sserafim' AND url = ?)`
+    )
+    .run(
+      "https://illit-official.jp/schedule/448882bcd3c1",
+      "https://illit-official.jp/schedule/a67dbfc0afb0",
+      "https://www.le-sserafim.jp/schedule"
+    );
+
   return database;
 }
 
@@ -296,6 +335,7 @@ function rowsToAppearances(rows: AppearanceRow[]): Appearance[] {
     location: row.location,
     status: row.status,
     sourceUrl: row.source_url,
+    verificationStatus: row.verification_status,
   }));
 }
 
@@ -312,9 +352,15 @@ export function getStoredSchedule(personId: string): StoredSchedule | null {
 
   const rows = db
     .prepare(
-      `SELECT id, title, type, start, doors, venue, location, status, source_url
-       FROM appearances WHERE person_id = ?
-       ORDER BY CASE WHEN start IS NULL THEN 1 ELSE 0 END, start, id`
+      `SELECT a.id, a.title, a.type, a.start, a.doors, a.venue, a.location,
+              a.status, a.source_url,
+              CASE WHEN s.verification_status = 'verified'
+                THEN 'verified' ELSE 'unverified' END AS verification_status
+       FROM appearances AS a
+       LEFT JOIN sources AS s
+         ON s.person_id = a.person_id AND s.url = a.source_url
+       WHERE a.person_id = ?
+       ORDER BY CASE WHEN a.start IS NULL THEN 1 ELSE 0 END, a.start, a.id`
     )
     .all(id) as unknown as AppearanceRow[];
 
@@ -361,6 +407,118 @@ export function getDefaultStoredSchedule(): StoredSchedule | null {
   return row ? getStoredSchedule(row.id) : null;
 }
 
+
+export function initializeStoredSchedule(
+  input: InitializeStoredScheduleInput
+): StoredSchedule {
+  const personId = normalizePersonId(input.personId);
+  const displayName = input.displayName.trim();
+  if (!personId) throw new Error("personId must not be empty");
+  if (!displayName) throw new Error("displayName must not be empty");
+  if (input.sources.length === 0) throw new Error("sources must not be empty");
+  if (input.events.length === 0) throw new Error("events must not be empty");
+
+  const sources = input.sources.map((source) => ({
+    url: source.url.trim(),
+    sourceText: source.sourceText,
+    verificationStatus: source.verificationStatus,
+  }));
+  const sourceUrls = new Set<string>();
+  for (const source of sources) {
+    if (!source.url) throw new Error("source URL must not be empty");
+    if (
+      source.verificationStatus !== "verified" &&
+      source.verificationStatus !== "unverified"
+    ) {
+      throw new Error(`Invalid verification status for source ${source.url}`);
+    }
+    if (sourceUrls.has(source.url)) {
+      throw new Error(`Duplicate source URL: ${source.url}`);
+    }
+    sourceUrls.add(source.url);
+  }
+
+  const events = input.events.map((event) => ({
+    ...event,
+    id: event.id.trim(),
+    sourceUrl: event.sourceUrl.trim(),
+  }));
+  for (const event of events) {
+    if (!event.id) throw new Error("event ID must not be empty");
+    if (!sourceUrls.has(event.sourceUrl)) {
+      throw new Error(
+        `Event ${event.id} references a source outside the submitted source set`
+      );
+    }
+  }
+
+  const db = getDatabase();
+  const now = new Date().toISOString();
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    db.prepare(
+      `INSERT INTO people (
+         id, display_name, status, last_checked_at, next_refresh_at,
+         created_at, updated_at
+       ) VALUES (?, ?, 'active', ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         display_name = excluded.display_name,
+         status = 'active',
+         last_checked_at = excluded.last_checked_at,
+         next_refresh_at = excluded.next_refresh_at,
+         updated_at = excluded.updated_at`
+    ).run(personId, displayName, now, now, now, now);
+
+    db.prepare("DELETE FROM appearances WHERE person_id = ?").run(personId);
+    db.prepare("DELETE FROM sources WHERE person_id = ?").run(personId);
+
+    const insertSource = db.prepare(
+      `INSERT INTO sources (
+         person_id, url, source_text, verification_status
+       ) VALUES (?, ?, ?, ?)`
+    );
+    for (const source of sources) {
+      insertSource.run(
+        personId,
+        source.url,
+        source.sourceText,
+        source.verificationStatus
+      );
+    }
+
+    const insertAppearance = db.prepare(
+      `INSERT INTO appearances (
+         person_id, id, title, type, start, doors, venue, location,
+         status, source_url, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    );
+    for (const event of events) {
+      insertAppearance.run(
+        personId,
+        event.id,
+        event.title,
+        event.type,
+        event.start,
+        event.doors,
+        event.venue,
+        event.location,
+        event.status,
+        event.sourceUrl,
+        now
+      );
+    }
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+
+  const schedule = getStoredSchedule(personId);
+  if (!schedule) {
+    throw new Error(`Failed to load initialized schedule for ${personId}`);
+  }
+  return schedule;
+}
 
 export function saveRefreshSuccess(
   personId: string,
