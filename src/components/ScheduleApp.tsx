@@ -6,35 +6,27 @@ import {
   apiAdapter,
   RefreshRequestError,
   normalizePersonId,
-  registerPendingWatch,
   sortAppearances,
   loadFollowed,
   saveFollowed,
-  loadPendingWatches,
-  savePendingWatches,
 } from "@/domain";
 import { SearchBar } from "./SearchBar";
 import { PersonHeader } from "./PersonHeader";
 import { EventList } from "./EventList";
 import { EventDetail } from "./EventDetail";
 
-type WatchRegistrar = (name: string) => Promise<void>;
 
 interface ScheduleAppProps {
   adapter?: ScheduleAdapter;
   initialPersonId?: string | null;
-  watchRegistrar?: WatchRegistrar;
 }
 
-const AUTO_REFRESH_MS = 15 * 60 * 1000;
 const MANUAL_REFRESH_COOLDOWN_MS = 60 * 1000;
 const MINUTE_MS = 60 * 1000;
-const PENDING_SEARCH_DELAY_MS = 1500;
 
 export function ScheduleApp({
   adapter = apiAdapter,
   initialPersonId = null,
-  watchRegistrar = registerPendingWatch,
 }: ScheduleAppProps) {
   const initialId = initialPersonId ? normalizePersonId(initialPersonId) : null;
   const initialName = initialPersonId?.trim() ?? "";
@@ -47,26 +39,20 @@ export function ScheduleApp({
   const [loading, setLoading] = useState(Boolean(initialId));
   const [searchError, setSearchError] = useState<string | null>(null);
   const [followed, setFollowed] = useState<string[]>([]);
-  const [pendingWatches, setPendingWatches] = useState<string[]>([]);
   const [storageReady, setStorageReady] = useState(false);
-  const [searchingPending, setSearchingPending] = useState(false);
-  const [pendingWatchError, setPendingWatchError] = useState<string | null>(null);
   const [refreshState, setRefreshState] = useState<RefreshState>("idle");
   const [refreshMessage, setRefreshMessage] = useState("Appearance date confirmed");
   const [lastCheckedAt, setLastCheckedAt] = useState<Date | null>(null);
   const [manualCoolingDown, setManualCoolingDown] = useState(false);
   const [now, setNow] = useState(() => new Date());
-  const pendingTimer = useRef<number | null>(null);
   const cooldownTimer = useRef<number | null>(null);
 
   useEffect(() => {
     setFollowed(loadFollowed());
-    setPendingWatches(loadPendingWatches());
     setStorageReady(true);
     const minuteTimer = window.setInterval(() => setNow(new Date()), MINUTE_MS);
     return () => {
       window.clearInterval(minuteTimer);
-      window.clearTimeout(pendingTimer.current ?? undefined);
       window.clearTimeout(cooldownTimer.current ?? undefined);
     };
   }, []);
@@ -75,16 +61,12 @@ export function ScheduleApp({
     if (storageReady) saveFollowed(followed);
   }, [followed, storageReady]);
 
-  useEffect(() => {
-    if (storageReady) savePendingWatches(pendingWatches);
-  }, [pendingWatches, storageReady]);
 
   useEffect(() => {
     if (!personId) return;
     let cancelled = false;
     setLoading(true);
     setSearchError(null);
-    setSearchingPending(false);
 
     adapter
       .load(personId)
@@ -153,19 +135,6 @@ export function ScheduleApp({
     [adapter, manualCoolingDown]
   );
 
-  const performRefreshRef = useRef(performRefresh);
-  useEffect(() => {
-    performRefreshRef.current = performRefresh;
-  }, [performRefresh]);
-
-  useEffect(() => {
-    if (!personId || events.length === 0) return;
-    const timer = window.setInterval(
-      () => performRefreshRef.current(personId, false),
-      AUTO_REFRESH_MS
-    );
-    return () => window.clearInterval(timer);
-  }, [events.length, personId]);
 
   const handleSearch = useCallback(() => {
     const trimmed = query.trim();
@@ -176,25 +145,6 @@ export function ScheduleApp({
     setPersonId(normalized);
   }, [query]);
 
-  const handleFindSchedule = useCallback(() => {
-    if (!personId) return;
-    setSearchingPending(true);
-    setPendingWatchError(null);
-    window.clearTimeout(pendingTimer.current ?? undefined);
-    pendingTimer.current = window.setTimeout(() => {
-      watchRegistrar(searchedName)
-        .then(() => {
-          setPendingWatches((previous) =>
-            previous.includes(personId) ? previous : [...previous, personId]
-          );
-        })
-        .catch(() => setPendingWatchError("Couldn’t start watching. Try again."))
-        .finally(() => {
-          setSearchingPending(false);
-          pendingTimer.current = null;
-        });
-    }, PENDING_SEARCH_DELAY_MS);
-  }, [personId, searchedName, watchRegistrar]);
 
   const handleToggleFollow = useCallback(() => {
     if (!personId) return;
@@ -210,12 +160,7 @@ export function ScheduleApp({
     [events, selectedId]
   );
   const isFollowing = personId ? followed.includes(personId) : false;
-  const isPending = personId ? pendingWatches.includes(personId) : false;
   const displayName = searchedName;
-  const pendingMessage = searchingPending
-    ? "Searching trusted sources…"
-    : pendingWatchError ??
-      (isPending ? "No verified schedule found. We’ll keep watching." : null);
 
   function openFollowingPerson(id: string) {
     setQuery(id);
@@ -290,12 +235,6 @@ export function ScheduleApp({
           {personId && searchError && !loading && (
             <div className="empty-state" role="status" aria-live="polite">
               <p>{searchError}</p>
-              {!isPending && !searchingPending && (
-                <button type="button" className="pending-button" onClick={handleFindSchedule}>
-                  Find their schedule
-                </button>
-              )}
-              {pendingMessage && <p className="detail-checked">{pendingMessage}</p>}
             </div>
           )}
 

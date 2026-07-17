@@ -112,37 +112,39 @@ describe("ScheduleApp", () => {
     );
   });
 
-  it("trims an unknown search and completes the pending-watch flow", async () => {
-    vi.useFakeTimers();
+  it("normalizes a search and renders a stored person’s schedule", async () => {
+    const load = vi.fn().mockResolvedValue(cloneFixtures());
+    const adapter: ScheduleAdapter = {
+      load,
+      refresh: vi.fn(),
+    };
+    render(<ScheduleApp adapter={adapter} initialPersonId={null} />);
+    const input = screen.getByLabelText("Search for a public schedule");
+
+    fireEvent.change(input, { target: { value: "  LE SSERAFIM  " } });
+    fireEvent.click(screen.getByRole("button", { name: "Search" }));
+
+    expect(await screen.findByRole("heading", { name: "LE SSERAFIM" })).toBeInTheDocument();
+    expect(load).toHaveBeenCalledWith("le-sserafim");
+  });
+
+  it("shows a not-found result without starting a new-person pull", async () => {
     const adapter: ScheduleAdapter = {
       load: vi.fn().mockResolvedValue([]),
       refresh: vi.fn(),
     };
-    render(
-      <ScheduleApp
-        adapter={adapter}
-        initialPersonId={null}
-        watchRegistrar={vi.fn().mockResolvedValue(undefined)}
-      />
-    );
+    render(<ScheduleApp adapter={adapter} initialPersonId={null} />);
     const input = screen.getByLabelText("Search for a public schedule");
 
     fireEvent.change(input, { target: { value: "  New Artist  " } });
     fireEvent.click(screen.getByRole("button", { name: "Search" }));
-    await flushPromises();
 
-    expect(adapter.load).toHaveBeenCalledWith("new-artist");
-    expect(screen.getByText("We don’t track “New Artist” yet.")).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "Find their schedule" }));
-    expect(screen.getByText("Searching trusted sources…")).toBeInTheDocument();
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(1500);
-    });
     expect(
-      screen.getByText("No verified schedule found. We’ll keep watching.")
+      await screen.findByText("We don’t track “New Artist” yet.")
     ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Find their schedule" })
+    ).not.toBeInTheDocument();
   });
 
   it("persists follow state across a remount", async () => {
@@ -176,24 +178,6 @@ describe("ScheduleApp", () => {
     expect(screen.getByText("Checked 1 minute ago")).toBeInTheDocument();
   });
 
-  it("auto-refreshes at 15 minutes, not before, and exposes the unchanged state", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-07-17T10:00:00Z"));
-    const adapter = makeAdapter();
-    render(<ScheduleApp adapter={adapter} initialPersonId="ILLIT" />);
-    await flushPromises();
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(15 * 60_000 - 1);
-    });
-    expect(adapter.refresh).not.toHaveBeenCalled();
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(1);
-    });
-    expect(adapter.refresh).toHaveBeenCalledTimes(1);
-    expect(screen.getByText("No changes")).toBeInTheDocument();
-  });
 
   it("applies a manual time correction, updates checked time, enforces cooldown, and preserves events on failure", async () => {
     vi.useFakeTimers();

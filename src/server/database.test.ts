@@ -3,8 +3,6 @@ import type { Appearance } from "@/contracts";
 import {
   getRefreshTarget,
   getStoredSchedule,
-  listDueRefreshPersonIds,
-  registerPendingWatch,
   saveRefreshSuccess,
 } from "./database";
 
@@ -36,31 +34,120 @@ describe("SQLite refresh registry", () => {
       "https://illit-official.jp/schedule/a67dbfc0afb0",
     ]);
     expect(target?.sourceText).toContain("Start: 18:30 JST");
-    expect(listDueRefreshPersonIds()).toContain("illit");
   });
 
-  it("persists a pending watch without inventing a refresh source", () => {
-    const pending = registerPendingWatch("  New Artist  ");
+  it("resolves the seeded LE SSERAFIM schedule from its normalized name", () => {
+    const officialSourceUrl = "https://www.le-sserafim.jp/schedule";
+    const expectedEvents = [
+      {
+        id: "cd9a55a1ecee",
+        start: "2026-07-25",
+        title: "2026 LE SSERAFIM TOUR 'PUREFLOW' IN JAPAN<大阪>",
+      },
+      {
+        id: "14228df7af90",
+        start: "2026-07-26",
+        title: "2026 LE SSERAFIM TOUR 'PUREFLOW' IN JAPAN<大阪>",
+      },
+      {
+        id: "2d3c40a92567",
+        start: "2026-07-30",
+        title: "2026 LE SSERAFIM TOUR 'PUREFLOW' IN JAPAN<神奈川>",
+      },
+      {
+        id: "b2a0f9bf625f",
+        start: "2026-08-01",
+        title: "2026 LE SSERAFIM TOUR 'PUREFLOW' IN JAPAN<神奈川>",
+      },
+      {
+        id: "747b697cf6bd",
+        start: "2026-08-02",
+        title: "2026 LE SSERAFIM TOUR 'PUREFLOW' IN JAPAN<神奈川>",
+      },
+      {
+        id: "2af83900ca7d",
+        start: "2026-08-05",
+        title:
+          "8月5日(水)ZOZOマリンスタジアムで行われる「千葉ロッテマリーンズVS埼玉西武戦」にHONG EUNCHAEがスペシャルゲストとして出演決定！",
+      },
+      {
+        id: "d36136c35661",
+        start: "2026-08-08",
+        title: "2026 LE SSERAFIM TOUR 'PUREFLOW' IN JAPAN<静岡>",
+      },
+      {
+        id: "b0d0a8482d26",
+        start: "2026-08-09",
+        title: "2026 LE SSERAFIM TOUR 'PUREFLOW' IN JAPAN<静岡>",
+      },
+      {
+        id: "yefbqx",
+        start: "2026-08-14",
+        title: "『SUMMER SONIC 2026』出演決定！<大阪>",
+      },
+      {
+        id: "uhegth",
+        start: "2026-08-16",
+        title: "『SUMMER SONIC 2026』出演決定！<東京>",
+      },
+      {
+        id: "d92459ce0aa3",
+        start: "2026-08-18",
+        title: "2026 LE SSERAFIM TOUR 'PUREFLOW' IN JAPAN<宮城>",
+      },
+      {
+        id: "1fc6d0d187f5",
+        start: "2026-08-19",
+        title: "2026 LE SSERAFIM TOUR 'PUREFLOW' IN JAPAN<宮城>",
+      },
+      {
+        id: "2d80a4a36ff6",
+        start: "2026-09-02",
+        title: "2026 LE SSERAFIM TOUR 'PUREFLOW' IN JAPAN<福岡>",
+      },
+      {
+        id: "99e18e89321a",
+        start: "2026-09-03",
+        title: "2026 LE SSERAFIM TOUR 'PUREFLOW' IN JAPAN<福岡>",
+      },
+    ];
 
-    expect(pending).toMatchObject({
-      personId: "new-artist",
-      displayName: "New Artist",
-      status: "pending",
-      events: [],
+    const schedule = getStoredSchedule("  LE SSERAFIM  ");
+    const target = getRefreshTarget("le-sserafim");
+
+    expect(schedule).toMatchObject({
+      personId: "le-sserafim",
+      displayName: "LE SSERAFIM",
+      status: "active",
     });
-    expect(getRefreshTarget("new-artist")?.sourceText).toBe("");
-    expect(listDueRefreshPersonIds()).not.toContain("new-artist");
+    expect(
+      schedule?.events.map(({ id, start, title }) => ({ id, start, title }))
+    ).toEqual(expectedEvents);
+    expect(
+      schedule?.events.every(
+        (event) =>
+          event.type === "EVENT＆LIVE" &&
+          event.status === "scheduled" &&
+          event.sourceUrl === officialSourceUrl
+      )
+    ).toBe(true);
+    expect(target?.sourceUrls).toEqual([officialSourceUrl]);
+    expect(target?.sourceText).toContain("Snapshot date: 2026-07-17");
+    for (const event of expectedEvents) {
+      expect(target?.sourceText).toContain(
+        `${event.start} | EVENT＆LIVE | ${event.title}`
+      );
+    }
   });
 
-  it("atomically persists refreshed appearances and refresh timestamps", () => {
-    registerPendingWatch("Another Artist");
-    const checkedAt = new Date("2026-07-17T10:00:00Z");
-    saveRefreshSuccess("another-artist", [storedEvent], checkedAt);
 
-    const schedule = getStoredSchedule("another-artist");
+  it("atomically persists manual refresh appearances and check time", () => {
+    const checkedAt = new Date("2026-07-17T10:00:00Z");
+    saveRefreshSuccess("illit", [storedEvent], checkedAt);
+
+    const schedule = getStoredSchedule("illit");
     expect(schedule?.status).toBe("active");
     expect(schedule?.lastCheckedAt).toBe(checkedAt.toISOString());
-    expect(schedule?.nextRefreshAt).toBe("2026-07-17T10:15:00.000Z");
     expect(schedule?.events).toEqual([storedEvent]);
   });
 });

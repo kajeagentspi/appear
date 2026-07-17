@@ -1,5 +1,4 @@
 const FOLLOWED_KEY = "appear:followed";
-const PENDING_KEY = "appear:pending";
 
 function getStorage(): Storage | null {
   if (typeof window === "undefined") return null;
@@ -57,22 +56,3 @@ export function toggleFollow(id: string): boolean {
   return !ids.includes(normalized);
 }
 
-export function loadPendingWatches(): string[] {
-  return readStringArray(PENDING_KEY);
-}
-
-export function savePendingWatches(names: string[]): void {
-  writeStringArray(PENDING_KEY, names);
-}
-
-export function isPendingWatch(name: string): boolean {
-  return loadPendingWatches().includes(name.trim().toLowerCase());
-}
-
-export function addPendingWatch(name: string): boolean {
-  const normalized = name.trim().toLowerCase();
-  const names = loadPendingWatches();
-  if (!normalized || names.includes(normalized)) return false;
-  savePendingWatches([...names, normalized]);
-  return true;
-}

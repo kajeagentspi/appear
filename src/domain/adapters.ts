@@ -80,11 +80,3 @@ export const apiAdapter: ScheduleAdapter = {
   },
 };
 
-export async function registerPendingWatch(name: string): Promise<void> {
-  const response = await fetch("/api/watch", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name: name.trim() }),
-  });
-  if (!response.ok) throw new Error(`Watch registration failed with ${response.status}`);
-}

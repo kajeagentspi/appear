@@ -359,7 +359,7 @@ input {
   text-overflow: ellipsis;
 }
 
-/* Empty / pending */
+/* Empty state */
 .empty-state {
   padding: var(--gap-lg);
   border: 1px solid var(--warm-gray);
@@ -368,15 +368,6 @@ input {
   text-align: center;
 }
 
-.pending-button {
-  margin-top: 0.75rem;
-  padding: 0.6rem 1rem;
-  border: 1px solid var(--ink);
-  border-radius: var(--radius-control);
-  background: var(--ink);
-  color: var(--white);
-  font-weight: 500;
-}
 
 /* Detail card */
 .detail-card {

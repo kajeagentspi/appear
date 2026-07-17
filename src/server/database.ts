@@ -4,15 +4,12 @@ import { DatabaseSync } from "node:sqlite";
 import type { Appearance } from "@/contracts";
 import { normalizePersonId } from "@/domain/people";
 
-const REFRESH_INTERVAL_MS = 15 * 60 * 1000;
-const FAILURE_RETRY_MS = 5 * 60 * 1000;
 
 interface PersonRow {
   id: string;
   display_name: string;
   status: "active" | "pending";
   last_checked_at: string | null;
-  next_refresh_at: string;
 }
 
 interface SourceRow {
@@ -37,7 +34,6 @@ export interface StoredSchedule {
   displayName: string;
   status: "active" | "pending";
   lastCheckedAt: string | null;
-  nextRefreshAt: string;
   events: Appearance[];
 }
 
@@ -90,8 +86,6 @@ function getDatabase(): DatabaseSync {
       PRIMARY KEY (person_id, id)
     );
 
-    CREATE INDEX IF NOT EXISTS people_due_refresh
-      ON people(next_refresh_at, status);
 
     INSERT OR IGNORE INTO people (
       id, display_name, status, last_checked_at, next_refresh_at, created_at, updated_at
@@ -177,6 +171,115 @@ Events:
        '2026-08-09', NULL, 'Hitachi Seaside Park', 'Ibaraki, Japan',
        'scheduled', 'https://illit-official.jp/schedule/a67dbfc0afb0',
        strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+
+    INSERT OR IGNORE INTO people (
+      id, display_name, status, last_checked_at, next_refresh_at, created_at, updated_at
+    ) VALUES (
+      'le-sserafim', 'LE SSERAFIM', 'active', NULL,
+      strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+      strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+      strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+    );
+
+    INSERT OR IGNORE INTO sources (person_id, url, source_text) VALUES (
+      'le-sserafim',
+      'https://www.le-sserafim.jp/schedule',
+      'LE SSERAFIM official schedule snapshot
+
+Source: https://www.le-sserafim.jp/schedule
+Snapshot date: 2026-07-17
+
+Upcoming events:
+- 2026-07-25 | EVENT＆LIVE | 2026 LE SSERAFIM TOUR ''PUREFLOW'' IN JAPAN<大阪>
+- 2026-07-26 | EVENT＆LIVE | 2026 LE SSERAFIM TOUR ''PUREFLOW'' IN JAPAN<大阪>
+- 2026-07-30 | EVENT＆LIVE | 2026 LE SSERAFIM TOUR ''PUREFLOW'' IN JAPAN<神奈川>
+- 2026-08-01 | EVENT＆LIVE | 2026 LE SSERAFIM TOUR ''PUREFLOW'' IN JAPAN<神奈川>
+- 2026-08-02 | EVENT＆LIVE | 2026 LE SSERAFIM TOUR ''PUREFLOW'' IN JAPAN<神奈川>
+- 2026-08-05 | EVENT＆LIVE | 8月5日(水)ZOZOマリンスタジアムで行われる「千葉ロッテマリーンズVS埼玉西武戦」にHONG EUNCHAEがスペシャルゲストとして出演決定！
+- 2026-08-08 | EVENT＆LIVE | 2026 LE SSERAFIM TOUR ''PUREFLOW'' IN JAPAN<静岡>
+- 2026-08-09 | EVENT＆LIVE | 2026 LE SSERAFIM TOUR ''PUREFLOW'' IN JAPAN<静岡>
+- 2026-08-14 | EVENT＆LIVE | 『SUMMER SONIC 2026』出演決定！<大阪>
+- 2026-08-16 | EVENT＆LIVE | 『SUMMER SONIC 2026』出演決定！<東京>
+- 2026-08-18 | EVENT＆LIVE | 2026 LE SSERAFIM TOUR ''PUREFLOW'' IN JAPAN<宮城>
+- 2026-08-19 | EVENT＆LIVE | 2026 LE SSERAFIM TOUR ''PUREFLOW'' IN JAPAN<宮城>
+- 2026-09-02 | EVENT＆LIVE | 2026 LE SSERAFIM TOUR ''PUREFLOW'' IN JAPAN<福岡>
+- 2026-09-03 | EVENT＆LIVE | 2026 LE SSERAFIM TOUR ''PUREFLOW'' IN JAPAN<福岡>'
+    );
+
+    INSERT OR IGNORE INTO appearances (
+      person_id, id, title, type, start, doors, venue, location,
+      status, source_url, updated_at
+    ) VALUES
+      ('le-sserafim', 'cd9a55a1ecee',
+       '2026 LE SSERAFIM TOUR ''PUREFLOW'' IN JAPAN<大阪>', 'EVENT＆LIVE',
+       '2026-07-25', NULL, NULL, NULL, 'scheduled',
+       'https://www.le-sserafim.jp/schedule',
+       strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      ('le-sserafim', '14228df7af90',
+       '2026 LE SSERAFIM TOUR ''PUREFLOW'' IN JAPAN<大阪>', 'EVENT＆LIVE',
+       '2026-07-26', NULL, NULL, NULL, 'scheduled',
+       'https://www.le-sserafim.jp/schedule',
+       strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      ('le-sserafim', '2d3c40a92567',
+       '2026 LE SSERAFIM TOUR ''PUREFLOW'' IN JAPAN<神奈川>', 'EVENT＆LIVE',
+       '2026-07-30', NULL, NULL, NULL, 'scheduled',
+       'https://www.le-sserafim.jp/schedule',
+       strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      ('le-sserafim', 'b2a0f9bf625f',
+       '2026 LE SSERAFIM TOUR ''PUREFLOW'' IN JAPAN<神奈川>', 'EVENT＆LIVE',
+       '2026-08-01', NULL, NULL, NULL, 'scheduled',
+       'https://www.le-sserafim.jp/schedule',
+       strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      ('le-sserafim', '747b697cf6bd',
+       '2026 LE SSERAFIM TOUR ''PUREFLOW'' IN JAPAN<神奈川>', 'EVENT＆LIVE',
+       '2026-08-02', NULL, NULL, NULL, 'scheduled',
+       'https://www.le-sserafim.jp/schedule',
+       strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      ('le-sserafim', '2af83900ca7d',
+       '8月5日(水)ZOZOマリンスタジアムで行われる「千葉ロッテマリーンズVS埼玉西武戦」にHONG EUNCHAEがスペシャルゲストとして出演決定！',
+       'EVENT＆LIVE', '2026-08-05', NULL, NULL, NULL, 'scheduled',
+       'https://www.le-sserafim.jp/schedule',
+       strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      ('le-sserafim', 'd36136c35661',
+       '2026 LE SSERAFIM TOUR ''PUREFLOW'' IN JAPAN<静岡>', 'EVENT＆LIVE',
+       '2026-08-08', NULL, NULL, NULL, 'scheduled',
+       'https://www.le-sserafim.jp/schedule',
+       strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      ('le-sserafim', 'b0d0a8482d26',
+       '2026 LE SSERAFIM TOUR ''PUREFLOW'' IN JAPAN<静岡>', 'EVENT＆LIVE',
+       '2026-08-09', NULL, NULL, NULL, 'scheduled',
+       'https://www.le-sserafim.jp/schedule',
+       strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      ('le-sserafim', 'yefbqx',
+       '『SUMMER SONIC 2026』出演決定！<大阪>', 'EVENT＆LIVE',
+       '2026-08-14', NULL, NULL, NULL, 'scheduled',
+       'https://www.le-sserafim.jp/schedule',
+       strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      ('le-sserafim', 'uhegth',
+       '『SUMMER SONIC 2026』出演決定！<東京>', 'EVENT＆LIVE',
+       '2026-08-16', NULL, NULL, NULL, 'scheduled',
+       'https://www.le-sserafim.jp/schedule',
+       strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      ('le-sserafim', 'd92459ce0aa3',
+       '2026 LE SSERAFIM TOUR ''PUREFLOW'' IN JAPAN<宮城>', 'EVENT＆LIVE',
+       '2026-08-18', NULL, NULL, NULL, 'scheduled',
+       'https://www.le-sserafim.jp/schedule',
+       strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      ('le-sserafim', '1fc6d0d187f5',
+       '2026 LE SSERAFIM TOUR ''PUREFLOW'' IN JAPAN<宮城>', 'EVENT＆LIVE',
+       '2026-08-19', NULL, NULL, NULL, 'scheduled',
+       'https://www.le-sserafim.jp/schedule',
+       strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      ('le-sserafim', '2d80a4a36ff6',
+       '2026 LE SSERAFIM TOUR ''PUREFLOW'' IN JAPAN<福岡>', 'EVENT＆LIVE',
+       '2026-09-02', NULL, NULL, NULL, 'scheduled',
+       'https://www.le-sserafim.jp/schedule',
+       strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+      ('le-sserafim', '99e18e89321a',
+       '2026 LE SSERAFIM TOUR ''PUREFLOW'' IN JAPAN<福岡>', 'EVENT＆LIVE',
+       '2026-09-03', NULL, NULL, NULL, 'scheduled',
+       'https://www.le-sserafim.jp/schedule',
+       strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
   `);
 
   return database;
@@ -201,7 +304,7 @@ export function getStoredSchedule(personId: string): StoredSchedule | null {
   const db = getDatabase();
   const person = db
     .prepare(
-      `SELECT id, display_name, status, last_checked_at, next_refresh_at
+      `SELECT id, display_name, status, last_checked_at
        FROM people WHERE id = ?`
     )
     .get(id) as PersonRow | undefined;
@@ -220,7 +323,6 @@ export function getStoredSchedule(personId: string): StoredSchedule | null {
     displayName: person.display_name,
     status: person.status,
     lastCheckedAt: person.last_checked_at,
-    nextRefreshAt: person.next_refresh_at,
     events: rowsToAppearances(rows),
   };
 }
@@ -259,22 +361,6 @@ export function getDefaultStoredSchedule(): StoredSchedule | null {
   return row ? getStoredSchedule(row.id) : null;
 }
 
-export function listDueRefreshPersonIds(now: Date = new Date()): string[] {
-  const rows = getDatabase()
-    .prepare(
-      `SELECT people.id
-       FROM people
-       WHERE next_refresh_at <= ?
-         AND EXISTS (
-           SELECT 1 FROM sources
-           WHERE sources.person_id = people.id
-             AND trim(sources.source_text) <> ''
-         )
-       ORDER BY next_refresh_at, id`
-    )
-    .all(now.toISOString()) as unknown as Array<{ id: string }>;
-  return rows.map((row) => row.id);
-}
 
 export function saveRefreshSuccess(
   personId: string,
@@ -284,7 +370,6 @@ export function saveRefreshSuccess(
   const id = normalizePersonId(personId);
   const db = getDatabase();
   const checked = checkedAt.toISOString();
-  const nextRefresh = new Date(checkedAt.getTime() + REFRESH_INTERVAL_MS).toISOString();
 
   db.exec("BEGIN IMMEDIATE");
   try {
@@ -312,9 +397,9 @@ export function saveRefreshSuccess(
     }
     db.prepare(
       `UPDATE people
-       SET status = 'active', last_checked_at = ?, next_refresh_at = ?, updated_at = ?
+       SET status = 'active', last_checked_at = ?, updated_at = ?
        WHERE id = ?`
-    ).run(checked, nextRefresh, checked, id);
+    ).run(checked, checked, id);
     db.exec("COMMIT");
   } catch (error) {
     db.exec("ROLLBACK");
@@ -322,32 +407,3 @@ export function saveRefreshSuccess(
   }
 }
 
-export function recordRefreshFailure(
-  personId: string,
-  failedAt: Date = new Date()
-): void {
-  const retryAt = new Date(failedAt.getTime() + FAILURE_RETRY_MS).toISOString();
-  getDatabase()
-    .prepare("UPDATE people SET next_refresh_at = ?, updated_at = ? WHERE id = ?")
-    .run(retryAt, failedAt.toISOString(), normalizePersonId(personId));
-}
-
-export function registerPendingWatch(name: string): StoredSchedule {
-  const displayName = name.trim();
-  const personId = normalizePersonId(displayName);
-  if (!personId) throw new Error("A person name is required");
-
-  const now = new Date().toISOString();
-  getDatabase()
-    .prepare(
-      `INSERT INTO people (
-         id, display_name, status, last_checked_at, next_refresh_at, created_at, updated_at
-       ) VALUES (?, ?, 'pending', NULL, ?, ?, ?)
-       ON CONFLICT(id) DO UPDATE SET
-         display_name = excluded.display_name,
-         updated_at = excluded.updated_at`
-    )
-    .run(personId, displayName, now, now, now);
-
-  return getStoredSchedule(personId)!;
-}
