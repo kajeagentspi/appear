@@ -1,6 +1,6 @@
 import type { RefreshResult } from "@/contracts";
 import { diffAppearances, normalizePersonId, sortAppearances } from "@/domain";
-import { callKimi } from "./aiand";
+import { callInference } from "./provider";
 import { getRefreshTarget, saveRefreshSuccess } from "./database";
 import { validateAppearances } from "./validate";
 
@@ -20,7 +20,7 @@ export async function refreshPersonSchedule(personId: string): Promise<RefreshRe
     throw new ScheduleSourceMissingError(`No source text is registered for ${id}`);
   }
 
-  const raw = await callKimi(target.sourceText);
+  const raw = await callInference(target.sourceText);
   const verificationBySource = new Map(
     target.events.map((event) => [event.sourceUrl, event.verificationStatus])
   );

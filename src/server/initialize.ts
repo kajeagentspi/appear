@@ -8,7 +8,7 @@ import { normalizePersonId, sortAppearances } from "@/domain";
 import {
   extractInitialAppearances,
   selectOfficialSourceUrls,
-} from "./aiand";
+} from "./provider";
 import {
   getStoredSchedule,
   initializeStoredSchedule,

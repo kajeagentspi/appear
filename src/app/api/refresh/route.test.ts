@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const kimi = vi.hoisted(() => {
+const inference = vi.hoisted(() => {
   class ConfigurationError extends Error {
     readonly code = "AI_NOT_CONFIGURED";
   }
@@ -10,9 +10,9 @@ const kimi = vi.hoisted(() => {
   };
 });
 
-vi.mock("@/server/aiand", () => ({
-  callKimi: kimi.call,
-  KimiConfigurationError: kimi.ConfigurationError,
+vi.mock("@/server/provider", () => ({
+  callInference: inference.call,
+  AiConfigurationError: inference.ConfigurationError,
 }));
 
 const sourceEvent = {
@@ -43,17 +43,17 @@ async function loadPost() {
 describe("POST /api/refresh", () => {
   beforeEach(() => {
     vi.resetModules();
-    kimi.call.mockReset();
+    inference.call.mockReset();
   });
 
   it("loads stored source text, persists a time correction, and later reports no changes", async () => {
-    kimi.call.mockResolvedValue({ events: [sourceEvent] });
+    inference.call.mockResolvedValue({ events: [sourceEvent] });
     const post = await loadPost();
 
     const first = await post(request("  ILLIT  "));
     const firstBody = await first.json();
     expect(first.status).toBe(200);
-    expect(kimi.call).toHaveBeenCalledWith(expect.stringContaining("Start: 18:30 JST"));
+    expect(inference.call).toHaveBeenCalledWith(expect.stringContaining("Start: 18:30 JST"));
     expect(firstBody.changed).toBe(true);
     expect(firstBody.message).toBe("Updated just now");
     expect(firstBody.events[0].start).toBe("2026-07-23T18:30:00+09:00");
@@ -66,7 +66,7 @@ describe("POST /api/refresh", () => {
   });
 
   it("maps missing configuration to 503 AI_NOT_CONFIGURED", async () => {
-    kimi.call.mockRejectedValue(new kimi.ConfigurationError("not configured"));
+    inference.call.mockRejectedValue(new inference.ConfigurationError("not configured"));
     const post = await loadPost();
 
     const response = await post(request());
@@ -81,7 +81,7 @@ describe("POST /api/refresh", () => {
   });
 
   it("maps invalid provider output to 502 INFERENCE_FAILED", async () => {
-    kimi.call.mockResolvedValue({ events: [{ title: "Missing source" }] });
+    inference.call.mockResolvedValue({ events: [{ title: "Missing source" }] });
     const post = await loadPost();
 
     const response = await post(request());
@@ -93,12 +93,12 @@ describe("POST /api/refresh", () => {
   });
 
   it("preserves the last successful events when the provider later fails", async () => {
-    kimi.call.mockResolvedValueOnce({ events: [sourceEvent] });
+    inference.call.mockResolvedValueOnce({ events: [sourceEvent] });
     const post = await loadPost();
     const successful = await post(request());
     const successfulBody = await successful.json();
 
-    kimi.call.mockRejectedValueOnce(new Error("provider unavailable"));
+    inference.call.mockRejectedValueOnce(new Error("provider unavailable"));
     const failed = await post(request());
     const failedBody = await failed.json();
 
@@ -121,6 +121,6 @@ describe("POST /api/refresh", () => {
 
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toMatchObject({ code: "BAD_REQUEST" });
-    expect(kimi.call).not.toHaveBeenCalled();
+    expect(inference.call).not.toHaveBeenCalled();
   });
 });

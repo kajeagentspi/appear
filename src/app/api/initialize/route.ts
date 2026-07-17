@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import {
-  KimiConfigurationError,
-  KimiInferenceError,
-} from "@/server/aiand";
+  AiConfigurationError,
+  AiInferenceError,
+} from "@/server/provider";
 import {
   initializePersonSchedule,
   InvalidPersonNameError,
@@ -53,7 +53,7 @@ export async function POST(request: Request) {
         "Web search is not configured."
       );
     }
-    if (error instanceof KimiConfigurationError) {
+    if (error instanceof AiConfigurationError) {
       return errorResponse(
         503,
         "AI_NOT_CONFIGURED",
@@ -74,7 +74,7 @@ export async function POST(request: Request) {
         "Source discovery failed."
       );
     }
-    if (error instanceof ValidationError || error instanceof KimiInferenceError) {
+    if (error instanceof ValidationError || error instanceof AiInferenceError) {
       return errorResponse(502, "INFERENCE_FAILED", "Inference failed.");
     }
     return errorResponse(

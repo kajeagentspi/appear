@@ -1,20 +1,22 @@
-import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import type { SearchCandidate, SourceDocument } from "@/contracts";
 
-const BRAVE_SEARCH_ENDPOINT = "https://api.search.brave.com/res/v1/web/search";
+const JINA_SEARCH_ENDPOINT = "https://s.jina.ai/";
+const JINA_READER_ENDPOINT = "https://r.jina.ai/";
 const SEARCH_QUERIES = [
-  (name: string) => `"${name}" official schedule`,
-  (name: string) => `"${name}" official tour dates`,
-  (name: string) => `"${name}" official appearances events`,
+  (name: string) => `"${name}" official schedule tour dates public appearances`,
+  (name: string) => `"${name}" 公式 スケジュール`,
+  (name: string) => `"${name}" 공식 일정 스케줄`,
 ] as const;
-const SEARCH_RESULTS_PER_QUERY = 5;
+const SEARCH_RESULTS_PER_QUERY = 10;
+const MAX_SEARCH_CANDIDATES = 6;
 const MAX_SOURCE_PAGES = 5;
-const MAX_REDIRECTS = 3;
-const REQUEST_TIMEOUT_MS = 8_000;
-const MAX_SEARCH_RESPONSE_BYTES = 512 * 1024;
-const MAX_SOURCE_RESPONSE_BYTES = 512 * 1024;
+const REQUEST_TIMEOUT_MS = 30_000;
+const MAX_SEARCH_RESPONSE_BYTES = 2 * 1024 * 1024;
+const MAX_SOURCE_RESPONSE_BYTES = 2 * 1024 * 1024;
 const MAX_EXTRACTED_TEXT_CHARS = 100_000;
+const MAX_CANDIDATE_TITLE_CHARS = 300;
+const MAX_CANDIDATE_DESCRIPTION_CHARS = 160;
 
 type SourceDiscoveryErrorCode =
   | "INVALID_SEARCH_QUERY"
@@ -22,15 +24,14 @@ type SourceDiscoveryErrorCode =
   | "SEARCH_RESPONSE_INVALID"
   | "UNSAFE_SOURCE_URL"
   | "SOURCE_FETCH_FAILED"
-  | "SOURCE_RESPONSE_TOO_LARGE"
-  | "SOURCE_CONTENT_TYPE_UNSUPPORTED"
-  | "SOURCE_REDIRECT_INVALID";
+  | "SOURCE_RESPONSE_INVALID"
+  | "SOURCE_RESPONSE_TOO_LARGE";
 
 export class WebSearchConfigurationError extends Error {
   readonly code = "WEB_SEARCH_NOT_CONFIGURED";
 
   constructor() {
-    super("BRAVE_SEARCH_API_KEY is required to discover official sources");
+    super("JINA_KEY is required to discover and read official sources");
     this.name = "WebSearchConfigurationError";
   }
 }
@@ -45,6 +46,12 @@ export class SourceDiscoveryError extends Error {
   }
 }
 
+function getJinaKey(): string {
+  const apiKey = process.env.JINA_KEY?.trim();
+  if (!apiKey) throw new WebSearchConfigurationError();
+  return apiKey;
+}
+
 function normalizedPersonName(personName: string): string {
   const name = personName.trim().replace(/\s+/g, " ");
   if (!name || name.length > 120 || /[\u0000-\u001f\u007f]/.test(name)) {
@@ -53,7 +60,7 @@ function normalizedPersonName(personName: string): string {
       "Person name must contain between 1 and 120 printable characters"
     );
   }
-  return name;
+  return name.replace(/["\\]/g, " ").replace(/\s+/g, " ").trim();
 }
 
 async function readResponseBody(
@@ -99,133 +106,6 @@ async function readResponseBody(
   return new TextDecoder().decode(body);
 }
 
-function canonicalHttpsUrl(value: string): string | null {
-  try {
-    const url = new URL(value);
-    if (url.protocol !== "https:" || url.username || url.password) return null;
-    url.hash = "";
-    return url.toString();
-  } catch {
-    return null;
-  }
-}
-
-function parseSearchCandidates(payload: unknown): SearchCandidate[] {
-  if (!payload || typeof payload !== "object") {
-    throw new SourceDiscoveryError(
-      "SEARCH_RESPONSE_INVALID",
-      "Brave Search returned an invalid response"
-    );
-  }
-
-  if (!(("web" in payload))) return [];
-  const web = payload.web;
-  if (
-    !web ||
-    typeof web !== "object" ||
-    !("results" in web) ||
-    !Array.isArray(web.results)
-  ) {
-    throw new SourceDiscoveryError(
-      "SEARCH_RESPONSE_INVALID",
-      "Brave Search returned an invalid web result list"
-    );
-  }
-
-  const candidates: SearchCandidate[] = [];
-  for (const result of web.results.slice(0, SEARCH_RESULTS_PER_QUERY)) {
-    if (
-      !result ||
-      typeof result !== "object" ||
-      !("url" in result) ||
-      !("title" in result)
-    ) {
-      continue;
-    }
-    const { url, title } = result;
-    const description = "description" in result ? result.description : undefined;
-    if (typeof url !== "string" || typeof title !== "string") continue;
-    const safeUrl = canonicalHttpsUrl(url);
-    if (!safeUrl) continue;
-    candidates.push({
-      url: safeUrl,
-      title: title.trim(),
-      description: typeof description === "string" ? description.trim() : "",
-    });
-  }
-  return candidates;
-}
-
-async function runSearch(query: string, apiKey: string): Promise<SearchCandidate[]> {
-  const endpoint = new URL(BRAVE_SEARCH_ENDPOINT);
-  endpoint.searchParams.set("q", query);
-  endpoint.searchParams.set("count", String(SEARCH_RESULTS_PER_QUERY));
-  endpoint.searchParams.set("safesearch", "moderate");
-  endpoint.searchParams.set("text_decorations", "false");
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-  try {
-    let response: Response;
-    try {
-      response = await fetch(endpoint, {
-        headers: {
-          Accept: "application/json",
-          "X-Subscription-Token": apiKey,
-        },
-        signal: controller.signal,
-      });
-    } catch {
-      throw new SourceDiscoveryError(
-        "SEARCH_REQUEST_FAILED",
-        "Brave Search request failed"
-      );
-    }
-
-    if (!response.ok) {
-      throw new SourceDiscoveryError(
-        "SEARCH_REQUEST_FAILED",
-        `Brave Search request failed with status ${response.status}`
-      );
-    }
-
-    const body = await readResponseBody(
-      response,
-      MAX_SEARCH_RESPONSE_BYTES,
-      "SEARCH_RESPONSE_INVALID"
-    );
-    let payload: unknown;
-    try {
-      payload = JSON.parse(body);
-    } catch {
-      throw new SourceDiscoveryError(
-        "SEARCH_RESPONSE_INVALID",
-        "Brave Search returned malformed JSON"
-      );
-    }
-    return parseSearchCandidates(payload);
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-export async function searchOfficialSourceCandidates(
-  personName: string
-): Promise<SearchCandidate[]> {
-  const apiKey = process.env.BRAVE_SEARCH_API_KEY?.trim();
-  if (!apiKey) throw new WebSearchConfigurationError();
-
-  const name = normalizedPersonName(personName);
-  const resultSets = await Promise.all(
-    SEARCH_QUERIES.map((buildQuery) => runSearch(buildQuery(name), apiKey))
-  );
-  const unique = new Map<string, SearchCandidate>();
-  for (const candidate of resultSets.flat()) {
-    if (!unique.has(candidate.url)) unique.set(candidate.url, candidate);
-  }
-  return [...unique.values()];
-}
-
 function ipv4IsPublic(address: string): boolean {
   const octets = address.split(".").map(Number);
   const [a, b] = octets;
@@ -251,19 +131,19 @@ function ipv4IsPublic(address: string): boolean {
 }
 
 function parseIpv6(address: string): number[] | null {
-  const normalized = address.toLowerCase();
-  const halves = normalized.split("::");
+  const halves = address.toLowerCase().split("::");
   if (halves.length > 2) return null;
+
   const parseHalf = (half: string): number[] | null => {
     if (!half) return [];
     const words: number[] = [];
     for (const part of half.split(":")) {
-      const value = Number.parseInt(part, 16);
-      if (!/^[0-9a-f]{1,4}$/.test(part) || !Number.isFinite(value)) return null;
-      words.push(value);
+      if (!/^[0-9a-f]{1,4}$/.test(part)) return null;
+      words.push(Number.parseInt(part, 16));
     }
     return words;
   };
+
   const left = parseHalf(halves[0]);
   const right = parseHalf(halves[1] ?? "");
   if (!left || !right) return null;
@@ -278,9 +158,7 @@ function ipv6IsPublic(address: string): boolean {
   const words = parseIpv6(address);
   if (!words) return false;
   const first = words[0];
-
-  if ((first & 0xe000) !== 0x2000) return false;
-  if (first === 0x2002) return false;
+  if ((first & 0xe000) !== 0x2000 || first === 0x2002) return false;
   if (
     first === 0x2001 &&
     (words[1] === 0 ||
@@ -293,241 +171,330 @@ function ipv6IsPublic(address: string): boolean {
   return true;
 }
 
-function addressIsPublic(address: string): boolean {
-  const family = isIP(address);
-  if (family === 4) return ipv4IsPublic(address);
-  if (family === 6) return ipv6IsPublic(address);
-  return false;
-}
-
-
-async function assertSafeSourceUrl(
-  value: string,
-  signal: AbortSignal
-): Promise<URL> {
-  let url: URL;
+function canonicalPublicHttpsUrl(value: string): string | null {
   try {
-    url = new URL(value);
+    const url = new URL(value);
+    if (url.protocol !== "https:" || url.username || url.password) return null;
+    url.hash = "";
+
+    const rawHostname = url.hostname.toLowerCase();
+    const hostname =
+      rawHostname.startsWith("[") && rawHostname.endsWith("]")
+        ? rawHostname.slice(1, -1)
+        : rawHostname;
+    if (hostname === "localhost" || hostname.endsWith(".localhost")) return null;
+
+    const family = isIP(hostname);
+    if (
+      (family === 4 && !ipv4IsPublic(hostname)) ||
+      (family === 6 && !ipv6IsPublic(hostname))
+    ) {
+      return null;
+    }
+    return url.toString();
   } catch {
-    throw new SourceDiscoveryError("UNSAFE_SOURCE_URL", "Source URL is invalid");
+    return null;
   }
-
-  if (url.protocol !== "https:") {
-    throw new SourceDiscoveryError(
-      "UNSAFE_SOURCE_URL",
-      "Source URL must use HTTPS"
-    );
-  }
-  if (url.username || url.password) {
-    throw new SourceDiscoveryError(
-      "UNSAFE_SOURCE_URL",
-      "Source URL must not contain credentials"
-    );
-  }
-  url.hash = "";
-
-  const rawHostname = url.hostname.toLowerCase();
-  const hostname =
-    rawHostname.startsWith("[") && rawHostname.endsWith("]")
-      ? rawHostname.slice(1, -1)
-      : rawHostname;
-  if (hostname === "localhost" || hostname.endsWith(".localhost")) {
-    throw new SourceDiscoveryError(
-      "UNSAFE_SOURCE_URL",
-      "Local source hosts are not allowed"
-    );
-  }
-
-  const literalFamily = isIP(hostname);
-  if (literalFamily) {
-    if (!addressIsPublic(hostname)) {
-      throw new SourceDiscoveryError(
-        "UNSAFE_SOURCE_URL",
-        "Source host resolved to a non-public address"
-      );
-    }
-    return url;
-  }
-
-  let rejectAbort!: (reason: SourceDiscoveryError) => void;
-  const aborted = new Promise<never>((_, reject) => {
-    rejectAbort = reject;
-  });
-  const rejectOnAbort = () =>
-    rejectAbort(
-      new SourceDiscoveryError(
-        "SOURCE_FETCH_FAILED",
-        "Source host resolution timed out"
-      )
-    );
-  signal.addEventListener("abort", rejectOnAbort, { once: true });
-  if (signal.aborted) rejectOnAbort();
-
-  let addresses: Array<{ address: string; family: number }>;
-  try {
-    addresses = await Promise.race([
-      lookup(hostname, { all: true, verbatim: true }),
-      aborted,
-    ]);
-  } catch (error) {
-    if (error instanceof SourceDiscoveryError) throw error;
-    throw new SourceDiscoveryError(
-      "SOURCE_FETCH_FAILED",
-      "Source host could not be resolved"
-    );
-  } finally {
-    signal.removeEventListener("abort", rejectOnAbort);
-  }
-  if (!addresses.length || addresses.some(({ address }) => !addressIsPublic(address))) {
-    throw new SourceDiscoveryError(
-      "UNSAFE_SOURCE_URL",
-      "Source host resolved to a non-public address"
-    );
-  }
-  return url;
 }
 
-function decodeHtmlEntities(text: string): string {
-  const named: Record<string, string> = {
-    amp: "&",
-    apos: "'",
-    gt: ">",
-    lt: "<",
-    mdash: "—",
-    ndash: "–",
-    nbsp: " ",
-    quot: '"',
-  };
-  return text.replace(/&(#(?:x[0-9a-f]+|\d+)|[a-z]+);/gi, (entity, name: string) => {
-    if (name[0] !== "#") return named[name.toLowerCase()] ?? entity;
-    const hex = name[1]?.toLowerCase() === "x";
-    const value = Number.parseInt(name.slice(hex ? 2 : 1), hex ? 16 : 10);
-    try {
-      return Number.isFinite(value) && value > 0 && value <= 0x10ffff
-        ? String.fromCodePoint(value)
-        : " ";
-    } catch {
-      return " ";
-    }
-  });
-}
-
-function htmlToReadableText(html: string): string {
-  const withoutHiddenContent = html
-    .replace(/<!--[\s\S]*?-->/g, " ")
-    .replace(/<(script|style|template|noscript|svg)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, " ");
-  const withBreaks = withoutHiddenContent
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<\/(?:address|article|aside|blockquote|div|footer|h[1-6]|header|li|main|nav|ol|p|pre|section|table|tr|ul)\s*>/gi, "\n");
-  return decodeHtmlEntities(withBreaks.replace(/<[^>]*>/g, " "))
-    .replace(/[ \t\f\v]+/g, " ")
-    .replace(/ *\n */g, "\n")
-    .replace(/\n{2,}/g, "\n")
+function compactCandidateText(value: unknown): string {
+  if (typeof value !== "string") return "";
+  return value
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, " ")
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .replace(/[#*_`>|~-]+/g, " ")
+    .replace(/\s+/g, " ")
     .trim()
-    .slice(0, MAX_EXTRACTED_TEXT_CHARS);
+    .slice(0, MAX_CANDIDATE_DESCRIPTION_CHARS);
 }
 
-function plainTextToReadableText(text: string): string {
-  return text
-    .replace(/\r\n?/g, "\n")
-    .replace(/[ \t\f\v]+/g, " ")
-    .replace(/ *\n */g, "\n")
-    .replace(/\n{2,}/g, "\n")
-    .trim()
-    .slice(0, MAX_EXTRACTED_TEXT_CHARS);
+function parseSearchCandidates(payload: unknown): SearchCandidate[] {
+  if (
+    !payload ||
+    typeof payload !== "object" ||
+    !("data" in payload) ||
+    !Array.isArray(payload.data)
+  ) {
+    throw new SourceDiscoveryError(
+      "SEARCH_RESPONSE_INVALID",
+      "Jina Search returned an invalid result list"
+    );
+  }
+
+  const candidates: SearchCandidate[] = [];
+  for (const result of payload.data.slice(0, SEARCH_RESULTS_PER_QUERY)) {
+    if (!result || typeof result !== "object" || !("url" in result)) continue;
+    if (
+      "httpStatus" in result &&
+      typeof result.httpStatus === "number" &&
+      result.httpStatus >= 400
+    ) {
+      continue;
+    }
+
+    const safeUrl =
+      typeof result.url === "string"
+        ? canonicalPublicHttpsUrl(result.url)
+        : null;
+    if (!safeUrl) continue;
+
+    const title =
+      "title" in result && typeof result.title === "string"
+        ? result.title.trim().slice(0, MAX_CANDIDATE_TITLE_CHARS)
+        : "";
+    const description =
+      "description" in result && typeof result.description === "string"
+        ? compactCandidateText(result.description)
+        : "";
+    const content = "content" in result ? compactCandidateText(result.content) : "";
+
+    candidates.push({
+      url: safeUrl,
+      title: title || new URL(safeUrl).hostname,
+      description: description || content,
+    });
+  }
+  return candidates;
 }
 
-async function fetchSourceDocument(sourceUrl: string): Promise<SourceDocument | null> {
+async function runSearch(query: string, apiKey: string): Promise<SearchCandidate[]> {
+  const endpoint = new URL(JINA_SEARCH_ENDPOINT);
+  endpoint.searchParams.set("q", query);
+
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-  let currentUrl = sourceUrl;
-
   try {
-    for (let redirectCount = 0; redirectCount <= MAX_REDIRECTS; redirectCount += 1) {
-      const safeUrl = await assertSafeSourceUrl(currentUrl, controller.signal);
-      let response: Response;
-      try {
-        response = await fetch(safeUrl, {
-          headers: {
-            Accept: "text/html, text/plain;q=0.9, text/*;q=0.8",
-            "User-Agent": "AppearScheduleBot/1.0",
-          },
-          redirect: "manual",
-          signal: controller.signal,
-        });
-      } catch {
-        throw new SourceDiscoveryError(
-          "SOURCE_FETCH_FAILED",
-          "Source page request failed"
-        );
-      }
-
-      if (response.status >= 300 && response.status < 400) {
-        const location = response.headers.get("location");
-        if (!location || redirectCount === MAX_REDIRECTS) {
-          throw new SourceDiscoveryError(
-            "SOURCE_REDIRECT_INVALID",
-            "Source page returned an invalid redirect chain"
-          );
-        }
-        try {
-          currentUrl = new URL(location, safeUrl).toString();
-        } catch {
-          throw new SourceDiscoveryError(
-            "SOURCE_REDIRECT_INVALID",
-            "Source page returned an invalid redirect target"
-          );
-        }
-        continue;
-      }
-
-      if (!response.ok) {
-        throw new SourceDiscoveryError(
-          "SOURCE_FETCH_FAILED",
-          `Source page request failed with status ${response.status}`
-        );
-      }
-
-      const contentType = response.headers
-        .get("content-type")
-        ?.split(";", 1)[0]
-        .trim()
-        .toLowerCase();
-      const isHtml =
-        contentType === "text/html" || contentType === "application/xhtml+xml";
-      const isText = contentType?.startsWith("text/") ?? false;
-      if (!isHtml && !isText) {
-        throw new SourceDiscoveryError(
-          "SOURCE_CONTENT_TYPE_UNSUPPORTED",
-          "Source page did not return HTML or text"
-        );
-      }
-
-      const body = await readResponseBody(
-        response,
-        MAX_SOURCE_RESPONSE_BYTES,
-        "SOURCE_RESPONSE_TOO_LARGE"
+    let response: Response;
+    try {
+      response = await fetch(endpoint, {
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${apiKey}`,
+          "User-Agent": "AppearScheduleBot/1.0",
+          "X-Max-Tokens": "3000",
+          "X-Retain-Images": "none",
+          "X-Retain-Media": "none",
+        },
+        signal: controller.signal,
+      });
+    } catch {
+      throw new SourceDiscoveryError(
+        "SEARCH_REQUEST_FAILED",
+        "Jina Search request failed"
       );
-      const text = isHtml ? htmlToReadableText(body) : plainTextToReadableText(body);
-      return text ? { url: safeUrl.toString(), text } : null;
+    }
+
+    if (!response.ok) {
+      throw new SourceDiscoveryError(
+        "SEARCH_REQUEST_FAILED",
+        `Jina Search request failed with status ${response.status}`
+      );
+    }
+
+    const body = await readResponseBody(
+      response,
+      MAX_SEARCH_RESPONSE_BYTES,
+      "SEARCH_RESPONSE_INVALID"
+    );
+    try {
+      return parseSearchCandidates(JSON.parse(body));
+    } catch (error) {
+      if (error instanceof SourceDiscoveryError) throw error;
+      throw new SourceDiscoveryError(
+        "SEARCH_RESPONSE_INVALID",
+        "Jina Search returned malformed JSON"
+      );
     }
   } finally {
     clearTimeout(timeout);
   }
+}
 
-  throw new SourceDiscoveryError(
-    "SOURCE_REDIRECT_INVALID",
-    "Source page returned too many redirects"
+function candidateQuality(candidate: SearchCandidate): number {
+  const hasDescriptiveTitle = candidate.title !== new URL(candidate.url).hostname;
+  return (hasDescriptiveTitle ? 10_000 : 0) + candidate.description.length;
+}
+
+function candidateRelevance(candidate: SearchCandidate): number {
+  const url = new URL(candidate.url);
+  const path = url.pathname.toLowerCase();
+  const title = candidate.title.toLowerCase();
+  const description = candidate.description.toLowerCase();
+  const scheduleTerms =
+    /schedule|calendar|events?|tour|live|appearances?|スケジュール|日程|予定|일정|스케줄|공연/i;
+  const officialTerms = /official|公式|공식/i;
+  const socialHost =
+    /(^|\.)(x\.com|twitter\.com|instagram\.com|facebook\.com|tiktok\.com)$/i;
+  const aggregatorHost =
+    /(^|\.)(blip\.kr|fandom\.com|ticketmaster\.[a-z.]+|twicehub\.com|wikipedia\.org)$/i;
+
+  let score = 0;
+  if (scheduleTerms.test(path)) score += 1_000;
+  if (officialTerms.test(title)) score += 400;
+  if (scheduleTerms.test(title)) score += 250;
+  if (officialTerms.test(description)) score += 120;
+  if (scheduleTerms.test(description)) score += 80;
+  if (socialHost.test(url.hostname) || /fan account/i.test(description)) score -= 800;
+  if (aggregatorHost.test(url.hostname)) score -= 600;
+  if (url.hostname.startsWith("shop.") || /\bofficial store\b/i.test(title)) {
+    score -= 400;
+  }
+  return score;
+}
+
+export async function searchOfficialSourceCandidates(
+  personName: string
+): Promise<SearchCandidate[]> {
+  const apiKey = getJinaKey();
+  const name = normalizedPersonName(personName);
+  const results = await Promise.allSettled(
+    SEARCH_QUERIES.map((buildQuery) => runSearch(buildQuery(name), apiKey))
   );
+
+  const successful = results.filter(
+    (result): result is PromiseFulfilledResult<SearchCandidate[]> =>
+      result.status === "fulfilled"
+  );
+  if (successful.length === 0) {
+    throw (results[0] as PromiseRejectedResult).reason;
+  }
+
+  const unique = new Map<string, SearchCandidate>();
+  for (const candidate of successful.flatMap((result) => result.value)) {
+    const existing = unique.get(candidate.url);
+    if (!existing) {
+      unique.set(candidate.url, candidate);
+    } else if (candidateQuality(candidate) > candidateQuality(existing)) {
+      unique.set(candidate.url, candidate);
+    }
+  }
+  const ranked = [...unique.values()].sort(
+    (left, right) => candidateRelevance(right) - candidateRelevance(left)
+  );
+  return ranked.slice(0, MAX_SEARCH_CANDIDATES);
+}
+
+function parseSourceDocument(payload: unknown): SourceDocument | null {
+  if (
+    !payload ||
+    typeof payload !== "object" ||
+    !("data" in payload) ||
+    !payload.data ||
+    typeof payload.data !== "object" ||
+    !("url" in payload.data) ||
+    !("content" in payload.data) ||
+    typeof payload.data.url !== "string" ||
+    typeof payload.data.content !== "string"
+  ) {
+    throw new SourceDiscoveryError(
+      "SOURCE_RESPONSE_INVALID",
+      "Jina Reader returned an invalid source document"
+    );
+  }
+
+  if (
+    "httpStatus" in payload.data &&
+    typeof payload.data.httpStatus === "number" &&
+    payload.data.httpStatus >= 400
+  ) {
+    throw new SourceDiscoveryError(
+      "SOURCE_FETCH_FAILED",
+      `Source page returned status ${payload.data.httpStatus}`
+    );
+  }
+
+  const url = canonicalPublicHttpsUrl(payload.data.url);
+  if (!url) {
+    throw new SourceDiscoveryError(
+      "UNSAFE_SOURCE_URL",
+      "Jina Reader returned an unsafe source URL"
+    );
+  }
+
+  const text = payload.data.content
+    .replace(/\r\n?/g, "\n")
+    .trim()
+    .slice(0, MAX_EXTRACTED_TEXT_CHARS);
+  return text ? { url, text } : null;
+}
+
+async function fetchSourceDocument(
+  sourceUrl: string,
+  apiKey: string
+): Promise<SourceDocument | null> {
+  const safeUrl = canonicalPublicHttpsUrl(sourceUrl);
+  if (!safeUrl) {
+    throw new SourceDiscoveryError(
+      "UNSAFE_SOURCE_URL",
+      "Source URL must be a public HTTPS URL"
+    );
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    let response: Response;
+    try {
+      response = await fetch(JINA_READER_ENDPOINT, {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/x-www-form-urlencoded",
+          "User-Agent": "AppearScheduleBot/1.0",
+          "X-Cache-Tolerance": "300",
+          "X-Detach-Invisibles": "true",
+          "X-Engine": "browser",
+          "X-Max-Tokens": "30000",
+          "X-Remove-Overlay": "true",
+          "X-Respond-Timing": "resource-idle",
+          "X-Retain-Images": "none",
+          "X-Retain-Media": "none",
+        },
+        body: new URLSearchParams({ url: safeUrl }),
+        signal: controller.signal,
+      });
+    } catch {
+      throw new SourceDiscoveryError(
+        "SOURCE_FETCH_FAILED",
+        "Jina Reader request failed"
+      );
+    }
+
+    if (!response.ok) {
+      throw new SourceDiscoveryError(
+        "SOURCE_FETCH_FAILED",
+        `Jina Reader request failed with status ${response.status}`
+      );
+    }
+
+    const body = await readResponseBody(
+      response,
+      MAX_SOURCE_RESPONSE_BYTES,
+      "SOURCE_RESPONSE_TOO_LARGE"
+    );
+    try {
+      return parseSourceDocument(JSON.parse(body));
+    } catch (error) {
+      if (error instanceof SourceDiscoveryError) throw error;
+      throw new SourceDiscoveryError(
+        "SOURCE_RESPONSE_INVALID",
+        "Jina Reader returned malformed JSON"
+      );
+    }
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 export async function fetchSourceDocuments(
   urls: string[]
 ): Promise<SourceDocument[]> {
+  const apiKey = getJinaKey();
   const boundedUrls: string[] = [];
   const seen = new Set<string>();
   for (const value of urls) {
-    const canonical = canonicalHttpsUrl(value);
+    const canonical = canonicalPublicHttpsUrl(value);
     const key = canonical ?? value;
     if (seen.has(key)) continue;
     seen.add(key);
@@ -535,10 +502,14 @@ export async function fetchSourceDocuments(
     if (boundedUrls.length === MAX_SOURCE_PAGES) break;
   }
 
-  const documents: SourceDocument[] = [];
-  for (const url of boundedUrls) {
-    const document = await fetchSourceDocument(url);
-    if (document) documents.push(document);
+  const results = await Promise.all(
+    boundedUrls.map((url) => fetchSourceDocument(url, apiKey))
+  );
+  const documents = new Map<string, SourceDocument>();
+  for (const document of results) {
+    if (document && !documents.has(document.url)) {
+      documents.set(document.url, document);
+    }
   }
-  return documents;
+  return [...documents.values()];
 }

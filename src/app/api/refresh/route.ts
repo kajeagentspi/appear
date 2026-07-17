@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import type { Appearance, RefreshResult } from "@/contracts";
 import { normalizePersonId } from "@/domain";
-import { KimiConfigurationError } from "@/server/aiand";
+import { AiConfigurationError } from "@/server/provider";
 import { getStoredSchedule } from "@/server/database";
 import {
   refreshPersonSchedule,
@@ -51,7 +51,7 @@ export async function POST(request: Request) {
         existingEvents
       );
     }
-    if (error instanceof KimiConfigurationError) {
+    if (error instanceof AiConfigurationError) {
       return errorResponse(
         503,
         "AI_NOT_CONFIGURED",

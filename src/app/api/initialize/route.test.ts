@@ -5,8 +5,8 @@ const routeMocks = vi.hoisted(() => {
   class NoSourcesFoundError extends Error {}
   class WebSearchConfigurationError extends Error {}
   class SourceDiscoveryError extends Error {}
-  class KimiConfigurationError extends Error {}
-  class KimiInferenceError extends Error {}
+  class AiConfigurationError extends Error {}
+  class AiInferenceError extends Error {}
   class ValidationError extends Error {}
   return {
     initialize: vi.fn(),
@@ -14,8 +14,8 @@ const routeMocks = vi.hoisted(() => {
     NoSourcesFoundError,
     WebSearchConfigurationError,
     SourceDiscoveryError,
-    KimiConfigurationError,
-    KimiInferenceError,
+    AiConfigurationError,
+    AiInferenceError,
     ValidationError,
   };
 });
@@ -31,9 +31,9 @@ vi.mock("@/server/web", () => ({
   SourceDiscoveryError: routeMocks.SourceDiscoveryError,
 }));
 
-vi.mock("@/server/aiand", () => ({
-  KimiConfigurationError: routeMocks.KimiConfigurationError,
-  KimiInferenceError: routeMocks.KimiInferenceError,
+vi.mock("@/server/provider", () => ({
+  AiConfigurationError: routeMocks.AiConfigurationError,
+  AiInferenceError: routeMocks.AiInferenceError,
 }));
 
 vi.mock("@/server/validate", () => ({
@@ -100,11 +100,11 @@ describe("POST /api/initialize", () => {
       503,
       "SEARCH_NOT_CONFIGURED",
     ],
-    [routeMocks.KimiConfigurationError, 503, "AI_NOT_CONFIGURED"],
+    [routeMocks.AiConfigurationError, 503, "AI_NOT_CONFIGURED"],
     [routeMocks.NoSourcesFoundError, 404, "NO_SOURCES_FOUND"],
     [routeMocks.SourceDiscoveryError, 502, "SOURCE_DISCOVERY_FAILED"],
     [routeMocks.ValidationError, 502, "INFERENCE_FAILED"],
-    [routeMocks.KimiInferenceError, 502, "INFERENCE_FAILED"],
+    [routeMocks.AiInferenceError, 502, "INFERENCE_FAILED"],
     [Error, 502, "INITIALIZATION_FAILED"],
   ])("maps %s to %i %s without exposing the error", async (
     ErrorType,

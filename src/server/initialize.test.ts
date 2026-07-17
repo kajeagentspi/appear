@@ -20,7 +20,7 @@ vi.mock("./web", () => ({
   fetchSourceDocuments: collaborators.fetch,
 }));
 
-vi.mock("./aiand", () => ({
+vi.mock("./provider", () => ({
   selectOfficialSourceUrls: collaborators.select,
   extractInitialAppearances: collaborators.extract,
 }));
