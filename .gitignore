@@ -1,0 +1,8 @@
+/node_modules
+/.next
+/.omx
+/out
+/.env
+/data/*.sqlite*
+*.log
+.DS_Store
